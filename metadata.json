@@ -1,0 +1,7 @@
+{
+  "description": "A sophisticated Student Record Management System implementing linked list data structures for dynamic memory management, featuring Gemini-powered academic insights.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "name": "App"
+}
