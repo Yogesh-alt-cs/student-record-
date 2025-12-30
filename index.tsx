@@ -42,7 +42,11 @@ import {
   PlusCircle,
   XCircle,
   ShieldCheck,
-  ChevronRight
+  ChevronRight,
+  CheckSquare,
+  Square,
+  Layers,
+  Contact
 } from 'lucide-react';
 
 // --- Data Types ---
@@ -78,6 +82,7 @@ interface StudentData {
   attendance: AttendanceRecord[];
   groups: string[];
   paymentHistory: PaymentRecord[];
+  notes: string;
 }
 
 // --- Data Structure: Singly Linked List ---
@@ -99,6 +104,7 @@ class StudentNode implements StudentData {
   attendance: AttendanceRecord[];
   groups: string[];
   paymentHistory: PaymentRecord[];
+  notes: string;
   next: StudentNode | null;
 
   constructor(data: StudentData) {
@@ -118,6 +124,7 @@ class StudentNode implements StudentData {
     this.attendance = data.attendance || [];
     this.groups = data.groups || [];
     this.paymentHistory = data.paymentHistory || [];
+    this.notes = data.notes || '';
     this.next = null;
   }
 }
@@ -232,8 +239,8 @@ class StudentLinkedList {
 // --- Components ---
 
 const App = () => {
-  const STORAGE_KEY = 'eduflow_student_records_v8'; 
-  const GROUP_STORAGE_KEY = 'eduflow_groups_v2';
+  const STORAGE_KEY = 'eduflow_student_records_v10'; 
+  const GROUP_STORAGE_KEY = 'eduflow_groups_v3';
   
   const [list] = useState<StudentLinkedList>(new StudentLinkedList());
   const [students, setStudents] = useState<StudentData[]>([]);
@@ -246,6 +253,9 @@ const App = () => {
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
   const [showClassAttendanceModal, setShowClassAttendanceModal] = useState(false);
   const [showDashboardModal, setShowDashboardModal] = useState(false);
+  const [showBulkGroupModal, setShowBulkGroupModal] = useState(false);
+  
+  const [selectedUsns, setSelectedUsns] = useState<Set<string>>(new Set());
   
   const [attendanceUsn, setAttendanceUsn] = useState<string | null>(null);
   const [editMode, setEditMode] = useState<string | null>(null); 
@@ -281,7 +291,7 @@ const App = () => {
     dateOfJoining: new Date().toISOString().split('T')[0],
     backlog: 0, phone: '', gmail: '', feesPaid: 0, feesTotal: 0,
     parentName: '', parentPhone: '', parentGmail: '',
-    attendance: [], groups: [], paymentHistory: []
+    attendance: [], groups: [], paymentHistory: [], notes: ''
   });
 
   useEffect(() => {
@@ -304,7 +314,7 @@ const App = () => {
         if (Array.isArray(parsed)) setAvailableGroups(parsed);
       } catch (e) { console.error(e); }
     }
-  }, [list, sortConfig.criteria, sortConfig.ascending]);
+  }, [list]);
 
   const updateStudents = () => {
     const currentArray = list.toArray();
@@ -353,7 +363,7 @@ const App = () => {
       dateOfJoining: new Date().toISOString().split('T')[0],
       backlog: 0, phone: '', gmail: '', feesPaid: 0, feesTotal: 0,
       parentName: '', parentPhone: '', parentGmail: '',
-      attendance: [], groups: [], paymentHistory: []
+      attendance: [], groups: [], paymentHistory: [], notes: ''
     });
     setShowModal(true);
   };
@@ -370,6 +380,44 @@ const App = () => {
     stopCamera();
     setShowModal(false);
     setEditMode(null);
+  };
+
+  const toggleSelection = (usn: string) => {
+    setSelectedUsns(prev => {
+      const next = new Set(prev);
+      if (next.has(usn)) next.delete(usn);
+      else next.add(usn);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selectedUsns.size === filteredStudents.length) setSelectedUsns(new Set());
+    else setSelectedUsns(new Set(filteredStudents.map(s => s.usn)));
+  };
+
+  const handleBulkGroupAssignment = (groupName: string) => {
+    selectedUsns.forEach(usn => {
+      const student = list.search(usn);
+      if (student && !student.groups.includes(groupName)) {
+        student.groups = [...student.groups, groupName];
+      }
+    });
+    updateStudents();
+    setSelectedUsns(new Set());
+    setShowBulkGroupModal(false);
+  };
+
+  const handleCreateAndAssignGroup = () => {
+    const groupName = prompt("Enter new group name to create and assign:");
+    if (groupName && groupName.trim()) {
+      const trimmedName = groupName.trim();
+      if (!availableGroups.includes(trimmedName)) {
+        updateGroups([...availableGroups, trimmedName]);
+      }
+      handleBulkGroupAssignment(trimmedName);
+      alert(`Group "${trimmedName}" created and assigned to ${selectedUsns.size} students.`);
+    }
   };
 
   const handleLogPayment = () => {
@@ -535,14 +583,14 @@ const App = () => {
   const handleExportCSV = () => {
     const dataToExport = exportScope === 'all' ? students : filteredStudents;
     if (dataToExport.length === 0) return;
-    const headers = ["USN", "NAME", "MARKS", "FEES_PAID", "FEES_TOTAL", "GMAIL", "PARENT_NAME", "PARENT_PHONE"];
-    const rows = dataToExport.map(s => [s.usn, s.name, s.marks, s.feesPaid, s.feesTotal, s.gmail, s.parentName, s.parentPhone].join(","));
+    const headers = ["USN", "NAME", "MARKS", "FEES_PAID", "FEES_TOTAL", "GMAIL", "PARENT_NAME", "PARENT_PHONE", "NOTES"];
+    const rows = dataToExport.map(s => [s.usn, s.name, s.marks, s.feesPaid, s.feesTotal, s.gmail, s.parentName, s.parentPhone, `"${s.notes?.replace(/"/g, '""')}"`].join(","));
     const csvContent = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `student_records_${new Date().getTime()}.csv`);
+    link.setAttribute("download", `student_records_full_${new Date().getTime()}.csv`);
     link.click();
     setShowExportModal(false);
   };
@@ -552,7 +600,7 @@ const App = () => {
     setIsAiLoading(true);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `Analyze academic data: ${JSON.stringify(students.slice(0, 15))}. Focus on financial health (fee collections) and student retention (attendance). Provide actionable advice in 120 words.`;
+      const prompt = `Analyze academic data: ${JSON.stringify(students.slice(0, 15))}. Focus on academic progress and behavioral notes. Provide management advice in 120 words.`;
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: prompt,
@@ -600,8 +648,19 @@ const App = () => {
       <main className="max-w-7xl mx-auto px-6 mt-10">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
           <div>
-            <h2 className="text-4xl font-black text-slate-900 tracking-tight">Main Directory</h2>
-            <p className="text-slate-500 font-medium mt-1 italic">Dynamic Student Information System with Linked List Backend.</p>
+            <div className="flex items-center gap-4 mb-2">
+              <h2 className="text-4xl font-black text-slate-900 tracking-tight">Main Directory</h2>
+              {filteredStudents.length > 0 && (
+                <button 
+                  onClick={selectAll} 
+                  className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors border border-indigo-100"
+                >
+                  {selectedUsns.size === filteredStudents.length ? <CheckSquare size={14} /> : <Square size={14} />}
+                  {selectedUsns.size === filteredStudents.length ? 'Deselect All' : 'Select All Filtered'}
+                </button>
+              )}
+            </div>
+            <p className="text-slate-500 font-medium mt-1 italic">Singly Linked List Backend with Multi-Select Bulk Actions.</p>
           </div>
           <div className="flex items-center gap-3">
             <button onClick={getAiInsight} disabled={isAiLoading} className="flex items-center gap-2 px-6 py-3 bg-white text-indigo-600 rounded-2xl hover:bg-indigo-50 transition-colors border border-indigo-100 font-black text-sm shadow-sm">
@@ -611,6 +670,34 @@ const App = () => {
           </div>
         </div>
 
+        {/* Bulk Action Bar */}
+        {selectedUsns.size > 0 && (
+          <div className="mb-10 bg-slate-900 text-white p-6 rounded-[2rem] shadow-2xl flex flex-wrap items-center justify-between gap-6 animate-in slide-in-from-top-4 sticky top-24 z-20 border border-white/10">
+             <div className="flex items-center gap-4">
+               <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center font-black text-xl shadow-lg">{selectedUsns.size}</div>
+               <div>
+                 <p className="font-black text-lg tracking-tight">Nodes Selected</p>
+                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Perform batch operations</p>
+               </div>
+             </div>
+             <div className="flex items-center gap-3">
+               <button 
+                 onClick={() => setShowBulkGroupModal(true)}
+                 className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-sm transition-all shadow-lg shadow-indigo-500/20 active:scale-95"
+               >
+                 <Layers size={18} />
+                 Assign Group
+               </button>
+               <button 
+                 onClick={() => setSelectedUsns(new Set())}
+                 className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-black text-sm transition-all active:scale-95"
+               >
+                 Cancel
+               </button>
+             </div>
+          </div>
+        )}
+
         {/* Filters */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-10">
           <div className="md:col-span-8 relative group">
@@ -619,7 +706,7 @@ const App = () => {
             </div>
             <input 
               type="text" 
-              placeholder="Search USN, Name, Phone, Parent..." 
+              placeholder="Search USN, Name, Phone, Gmail, Parent..." 
               className="w-full pl-16 pr-8 py-5 bg-white border border-slate-200 rounded-2xl shadow-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all text-lg font-medium"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -658,10 +745,25 @@ const App = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {filteredStudents.length > 0 ? (
             filteredStudents.map((student) => (
-              <div key={student.usn} className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 hover:shadow-xl hover:-translate-y-1 transition-all group flex flex-col justify-between">
-                <div>
+              <div 
+                key={student.usn} 
+                className={`bg-white rounded-3xl p-8 shadow-sm border transition-all group flex flex-col justify-between relative overflow-hidden ${
+                  selectedUsns.has(student.usn) ? 'border-indigo-600 ring-4 ring-indigo-50' : 'border-slate-100 hover:shadow-xl hover:-translate-y-1'
+                }`}
+              >
+                {/* Selection Checkbox */}
+                <button 
+                  onClick={() => toggleSelection(student.usn)}
+                  className={`absolute top-4 left-4 p-2 rounded-xl transition-all z-10 ${
+                    selectedUsns.has(student.usn) ? 'bg-indigo-600 text-white' : 'bg-slate-50 text-slate-300 hover:text-indigo-400'
+                  }`}
+                >
+                  {selectedUsns.has(student.usn) ? <CheckSquare size={18} /> : <Square size={18} />}
+                </button>
+
+                <div className="mt-2">
                   <div className="flex justify-between items-start mb-6">
-                    <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-md bg-slate-100 border-2 border-slate-50">
+                    <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-md bg-slate-100 border-2 border-slate-50 ml-4">
                       {student.avatar ? <img src={student.avatar} alt={student.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-slate-300"><User size={40} /></div>}
                     </div>
                     <div className="flex gap-1">
@@ -677,6 +779,12 @@ const App = () => {
                         <Hash size={12} />
                         <span className="font-mono">{student.usn}</span>
                       </div>
+                      {student.gmail && (
+                         <div className="flex items-center gap-2 text-slate-400 font-bold text-[10px] mt-1 truncate">
+                           <Mail size={10} />
+                           {student.gmail}
+                         </div>
+                      )}
                     </div>
 
                     <div className="flex flex-wrap gap-1.5 min-h-[24px]">
@@ -685,21 +793,29 @@ const App = () => {
                       ))}
                     </div>
 
+                    {/* Notes Preview */}
+                    {student.notes && (
+                      <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100 border-dashed">
+                        <p className="text-[9px] text-amber-600 font-black uppercase mb-1 flex items-center gap-1.5"><FileText size={12} /> Observations</p>
+                        <p className="text-[11px] text-slate-600 italic line-clamp-2 leading-relaxed">"{student.notes}"</p>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-slate-50 p-3 rounded-2xl">
-                        <p className="text-[9px] text-slate-400 font-black uppercase mb-0.5">Academic Score</p>
+                      <div className="bg-slate-50 p-3 rounded-2xl text-center">
+                        <p className="text-[9px] text-slate-400 font-black uppercase mb-0.5">Academic</p>
                         <p className="text-base font-black text-slate-800">{student.marks}%</p>
                       </div>
-                      <div onClick={() => { setAttendanceUsn(student.usn); setShowAttendanceModal(true); }} className="bg-slate-50 p-3 rounded-2xl cursor-pointer hover:bg-emerald-50 transition-colors">
-                        <p className="text-[9px] text-slate-400 font-black uppercase mb-0.5">Attendance</p>
+                      <div onClick={() => { setAttendanceUsn(student.usn); setShowAttendanceModal(true); }} className="bg-slate-50 p-3 rounded-2xl cursor-pointer hover:bg-emerald-50 transition-colors text-center">
+                        <p className="text-[9px] text-slate-400 font-black uppercase mb-0.5">Attend.</p>
                         <p className="text-base font-black text-emerald-600">{calculateAttendancePercentage(student.attendance)}%</p>
                       </div>
                     </div>
 
                     <div className="bg-slate-50/50 p-4 rounded-2xl border border-dashed border-slate-200 space-y-2">
-                       <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest flex items-center gap-1.5"><ShieldCheck size={12} className="text-indigo-500" /> Parent Guardian</p>
+                       <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest flex items-center gap-1.5"><ShieldCheck size={12} className="text-indigo-500" /> Primary Guardian</p>
                        <div className="space-y-1">
-                          <p className="text-xs font-black text-slate-700">{student.parentName || 'Unknown'}</p>
+                          <p className="text-xs font-black text-slate-700">{student.parentName || 'Unspecified'}</p>
                           <div className="flex items-center gap-3">
                              <div className="flex items-center gap-1 text-[10px] text-slate-500 font-bold"><Phone size={10} /> {student.parentPhone || 'N/A'}</div>
                           </div>
@@ -710,11 +826,11 @@ const App = () => {
 
                 <div className="pt-4 border-t border-slate-50 mt-4">
                   <div className="flex justify-between items-end mb-2">
-                     <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider flex items-center gap-1.5"><Wallet size={12} /> Fee Balance</p>
+                     <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider flex items-center gap-1.5"><Wallet size={12} /> Outstanding</p>
                      <p className={`text-base font-black ${student.feesPaid >= student.feesTotal ? 'text-emerald-600' : 'text-rose-600'}`}>₹{(student.feesTotal - student.feesPaid).toLocaleString()}</p>
                   </div>
                   <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500" style={{ width: `${student.feesTotal > 0 ? (student.feesPaid / student.feesTotal) * 100 : 0}%` }} />
+                    <div className="h-full bg-emerald-500 shadow-sm" style={{ width: `${student.feesTotal > 0 ? (student.feesPaid / student.feesTotal) * 100 : 0}%` }} />
                   </div>
                 </div>
               </div>
@@ -722,13 +838,13 @@ const App = () => {
           ) : (
             <div className="col-span-full py-32 text-center bg-white rounded-[3rem] border border-slate-100">
               <div className="bg-slate-50 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-200"><Search size={48} /></div>
-              <h3 className="text-2xl font-black text-slate-800">No matching nodes found</h3>
+              <h3 className="text-2xl font-black text-slate-800">No student nodes found</h3>
             </div>
           )}
         </div>
       </main>
 
-      {/* Global Persistence Bar */}
+      {/* Global Status Bar */}
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md px-10 py-5 rounded-full shadow-2xl flex items-center gap-10 border border-white/10 text-white z-40">
         <div className="text-center"><p className="text-[9px] text-slate-400 font-black uppercase">Cohort</p><p className="text-lg font-black">{students.length}</p></div>
         <div className="w-px bg-white/10 h-8" />
@@ -767,8 +883,8 @@ const App = () => {
 
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest"><Tag size={14} className="inline mr-2" /> Groups</h3>
-                    <button type="button" onClick={() => { const n = prompt("New Group Name:"); if(n) updateGroups([...availableGroups, n]) }} className="text-indigo-600"><PlusCircle size={20} /></button>
+                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest"><Tag size={14} className="inline mr-2" /> Program Groups</h3>
+                    <button type="button" onClick={() => { const n = prompt("New Group Name:"); if(n) updateGroups([...availableGroups, n.trim()]) }} className="text-indigo-600 hover:scale-110 transition-transform"><PlusCircle size={20} /></button>
                   </div>
                   <div className="flex flex-wrap gap-2 p-4 bg-slate-50 rounded-2xl border border-slate-100 min-h-[100px]">
                     {availableGroups.map(group => (
@@ -780,7 +896,7 @@ const App = () => {
                           setFormData({...formData, groups: isSelected ? formData.groups.filter(g => g !== group) : [...formData.groups, group]})
                         }}
                         className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
-                          formData.groups.includes(group) ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-200'
+                          formData.groups.includes(group) ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-400 border border-slate-200 hover:border-indigo-200'
                         }`}
                       >
                         {group}
@@ -791,32 +907,56 @@ const App = () => {
               </div>
 
               <div className="lg:col-span-8 space-y-10">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Name</label><input type="text" required className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-indigo-500 outline-none font-bold" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
-                  <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">USN / ID</label><input type="text" required className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-indigo-500 outline-none uppercase font-bold" value={formData.usn} onChange={e => setFormData({...formData, usn: e.target.value})} /></div>
-                  <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Academic Marks %</label><input type="number" required className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-black text-lg" value={formData.marks} onChange={e => setFormData({...formData, marks: Number(e.target.value)})} /></div>
-                  <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Backlogs</label><input type="number" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-black text-lg" value={formData.backlog} onChange={e => setFormData({...formData, backlog: Number(e.target.value)})} /></div>
+                <div className="space-y-6">
+                   <div className="flex items-center gap-3 border-b border-slate-200 pb-2">
+                     <GraduationCap size={18} className="text-indigo-600" />
+                     <h3 className="font-black text-slate-800 uppercase tracking-widest text-xs">Primary Enrollment Data</h3>
+                   </div>
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Name</label><input type="text" required placeholder="Full Name" className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-indigo-500 outline-none font-bold" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">USN / ID</label><input type="text" required placeholder="1XX22CS000" className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-indigo-500 outline-none uppercase font-bold" value={formData.usn} onChange={e => setFormData({...formData, usn: e.target.value})} /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Academic Score %</label><input type="number" required placeholder="0.0" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-black text-lg" value={formData.marks} onChange={e => setFormData({...formData, marks: Number(e.target.value)})} /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Backlogs</label><input type="number" placeholder="0" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-black text-lg" value={formData.backlog} onChange={e => setFormData({...formData, backlog: Number(e.target.value)})} /></div>
+                  </div>
                 </div>
 
                 <div className="space-y-6 bg-slate-50/50 p-8 rounded-[2.5rem] border border-slate-100">
-                  <div className="flex items-center gap-3 border-b border-slate-200 pb-2"><ShieldCheck size={18} className="text-indigo-600" /><h3 className="font-black text-slate-800 uppercase tracking-widest text-xs">Guardian Information</h3></div>
+                  <div className="flex items-center gap-3 border-b border-slate-200 pb-2"><Contact size={18} className="text-indigo-600" /><h3 className="font-black text-slate-800 uppercase tracking-widest text-xs">Contact Details</h3></div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <div className="space-y-1.5 sm:col-span-2"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Guardian Name</label><input type="text" className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-indigo-500 outline-none font-bold" value={formData.parentName} onChange={e => setFormData({...formData, parentName: e.target.value})} /></div>
-                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Guardian Phone</label><input type="tel" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-bold" value={formData.parentPhone} onChange={e => setFormData({...formData, parentPhone: e.target.value})} /></div>
-                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Guardian Gmail</label><input type="email" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-bold" value={formData.parentGmail} onChange={e => setFormData({...formData, parentGmail: e.target.value})} /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Student Phone</label><input type="tel" placeholder="+91..." className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-bold" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Student Gmail</label><input type="email" placeholder="student@gmail.com" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-bold" value={formData.gmail} onChange={e => setFormData({...formData, gmail: e.target.value})} /></div>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Behavioral & Academic Observations</label>
+                  <textarea 
+                    placeholder="Enter observations, warnings, or special requirements for this node..." 
+                    className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-indigo-500 outline-none font-medium min-h-[120px] bg-slate-50/30" 
+                    value={formData.notes} 
+                    onChange={e => setFormData({...formData, notes: e.target.value})} 
+                  />
+                </div>
+
+                <div className="space-y-6 bg-slate-50/50 p-8 rounded-[2.5rem] border border-slate-100">
+                  <div className="flex items-center gap-3 border-b border-slate-200 pb-2"><ShieldCheck size={18} className="text-indigo-600" /><h3 className="font-black text-slate-800 uppercase tracking-widest text-xs">Guardian Documentation</h3></div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="space-y-1.5 sm:col-span-2"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Guardian Full Name</label><input type="text" placeholder="Guardian Name" className="w-full px-5 py-4 rounded-xl border border-slate-200 focus:border-indigo-500 outline-none font-bold" value={formData.parentName} onChange={e => setFormData({...formData, parentName: e.target.value})} /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Guardian Contact</label><input type="tel" placeholder="Guardian Phone" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-bold" value={formData.parentPhone} onChange={e => setFormData({...formData, parentPhone: e.target.value})} /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Guardian Gmail</label><input type="email" placeholder="guardian@gmail.com" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-bold" value={formData.parentGmail} onChange={e => setFormData({...formData, parentGmail: e.target.value})} /></div>
                   </div>
                 </div>
 
                 <div className="bg-slate-50 p-8 rounded-3xl border border-slate-100 space-y-6">
                   <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-                    <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] flex items-center gap-2"><Receipt size={16} className="text-emerald-600" /> Fee Payment Ledger</h3>
+                    <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] flex items-center gap-2"><Receipt size={16} className="text-emerald-600" /> Financial Ledger</h3>
                     <p className="text-xl font-black text-emerald-600">₹{formData.feesPaid.toLocaleString()}</p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6"><div className="space-y-1.5"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">Total Course Fee</label><input type="number" className="w-full px-5 py-4 rounded-xl border border-slate-200 outline-none font-black text-lg" value={formData.feesTotal} onChange={e => setFormData({...formData, feesTotal: Number(e.target.value)})} /></div></div>
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 bg-white p-3 rounded-2xl shadow-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
                     <div className="sm:col-span-5"><input type="number" placeholder="Amt (₹)" className="w-full px-4 py-3 rounded-xl bg-slate-50 text-sm font-black border-none outline-none" value={payAmount || ''} onChange={e => setPayAmount(Number(e.target.value))} /></div>
-                    <div className="sm:col-span-5"><input type="text" placeholder="Note" className="w-full px-4 py-3 rounded-xl bg-slate-50 text-sm font-bold border-none outline-none" value={payNote} onChange={e => setPayNote(e.target.value)} /></div>
-                    <div className="sm:col-span-2"><button type="button" onClick={handleLogPayment} className="w-full h-full bg-emerald-600 text-white rounded-xl flex items-center justify-center hover:bg-emerald-700 transition-colors"><PlusCircle size={20} /></button></div>
+                    <div className="sm:col-span-5"><input type="text" placeholder="Memo" className="w-full px-4 py-3 rounded-xl bg-slate-50 text-sm font-bold border-none outline-none" value={payNote} onChange={e => setPayNote(e.target.value)} /></div>
+                    <div className="sm:col-span-2"><button type="button" onClick={handleLogPayment} className="w-full h-full bg-emerald-600 text-white rounded-xl flex items-center justify-center hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-500/10"><PlusCircle size={20} /></button></div>
                   </div>
                   <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
                     {formData.paymentHistory?.length > 0 ? formData.paymentHistory.map((p, i) => (
@@ -827,13 +967,49 @@ const App = () => {
                         </div>
                         <Check size={14} className="text-emerald-500" />
                       </div>
-                    )).reverse() : <p className="text-center py-4 text-[10px] text-slate-400 font-black uppercase tracking-widest italic">No transactions</p>}
+                    )).reverse() : <p className="text-center py-4 text-[10px] text-slate-400 font-black uppercase tracking-widest italic">No node transactions recorded</p>}
                   </div>
                 </div>
 
-                <button type="submit" className="w-full bg-slate-900 text-white font-black py-6 rounded-3xl shadow-xl transition-all active:scale-[0.98] uppercase tracking-[0.2em] text-sm">Save Complete Record</button>
+                <button type="submit" className="w-full bg-slate-900 text-white font-black py-6 rounded-3xl shadow-xl transition-all active:scale-[0.98] uppercase tracking-[0.2em] text-sm shadow-slate-900/10">Commit Complete Repository Node</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Group Assignment Modal */}
+      {showBulkGroupModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setShowBulkGroupModal(false)} />
+          <div className="relative bg-white rounded-[2rem] w-full max-w-md p-8 shadow-2xl animate-in zoom-in duration-200">
+            <div className="flex justify-between items-center mb-6">
+               <div className="flex items-center gap-3">
+                 <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl"><Layers size={24} /></div>
+                 <h2 className="text-xl font-black text-slate-900">Batch Assignment</h2>
+               </div>
+               <button onClick={() => setShowBulkGroupModal(false)} className="p-2 hover:bg-slate-50 rounded-full transition-colors"><X size={20} /></button>
+            </div>
+            <p className="text-slate-500 text-sm mb-6 font-medium">Map a segment to the {selectedUsns.size} selected nodes.</p>
+            <div className="grid grid-cols-1 gap-2 mb-8 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+               {availableGroups.map(group => (
+                 <button 
+                  key={group}
+                  onClick={() => handleBulkGroupAssignment(group)}
+                  className="flex items-center justify-between p-4 bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 rounded-2xl transition-all group"
+                 >
+                   <span className="text-xs font-black text-slate-700 uppercase">{group}</span>
+                   <ChevronRight size={16} className="text-slate-300 group-hover:text-indigo-600 transition-colors" />
+                 </button>
+               ))}
+            </div>
+            <button 
+              onClick={handleCreateAndAssignGroup}
+              className="w-full py-4 border-2 border-dashed border-slate-200 text-slate-400 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50 transition-all flex items-center justify-center gap-2"
+            >
+              <PlusCircle size={16} />
+              Create & Assign New Segment
+            </button>
           </div>
         </div>
       )}
@@ -845,28 +1021,28 @@ const App = () => {
           <div className="relative bg-white rounded-[3rem] w-full max-w-4xl p-10 shadow-2xl overflow-y-auto max-h-[90vh] animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-between items-center mb-8 pb-4 border-b border-slate-100">
               <div className="flex items-center gap-4">
-                <div className="p-3 bg-emerald-600 text-white rounded-2xl"><CalendarCheck size={28} /></div>
-                <div><h2 className="text-3xl font-black text-slate-900 tracking-tight">Daily Roll Call</h2><p className="text-slate-400 font-bold text-xs">Mark attendance for the entire cohort.</p></div>
+                <div className="p-3 bg-emerald-600 text-white rounded-2xl shadow-lg shadow-emerald-500/20"><CalendarCheck size={28} /></div>
+                <div><h2 className="text-3xl font-black text-slate-900 tracking-tight">Daily Roll Call</h2><p className="text-slate-400 font-bold text-xs">Verify presence for the entire cohort segment.</p></div>
               </div>
               <button onClick={() => setShowClassAttendanceModal(false)} className="p-3 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"><X size={24} /></button>
             </div>
-            <div className="mb-8 flex items-center gap-4 bg-slate-50 p-6 rounded-2xl">
+            <div className="mb-8 flex items-center gap-4 bg-slate-50 p-6 rounded-2xl border border-slate-100">
               <div className="space-y-1 flex-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Session Date</label>
-                <input type="date" className="w-full px-5 py-4 rounded-xl border border-slate-200 bg-white font-black text-lg" value={attDate} onChange={e => setAttDate(e.target.value)} />
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Session Timeline</label>
+                <input type="date" className="w-full px-5 py-4 rounded-xl border border-slate-200 bg-white font-black text-lg focus:border-indigo-500 outline-none" value={attDate} onChange={e => setAttDate(e.target.value)} />
               </div>
               <div className="flex flex-col gap-2">
-                 <p className="text-[10px] font-black text-slate-400 uppercase text-center">Auto-fill</p>
+                 <p className="text-[10px] font-black text-slate-400 uppercase text-center">Batch Status</p>
                  <div className="flex gap-1">
                    {['present', 'absent', 'leave'].map(s => (
-                     <button key={s} onClick={() => { const u: Record<string, AttendanceStatus> = {}; students.forEach(st => u[st.usn] = s as AttendanceStatus); setBulkAttStatus(u); }} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[9px] font-black uppercase hover:bg-slate-100 transition-colors">{s[0]}</button>
+                     <button key={s} onClick={() => { const u: Record<string, AttendanceStatus> = {}; students.forEach(st => u[st.usn] = s as AttendanceStatus); setBulkAttStatus(u); }} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[9px] font-black uppercase hover:bg-indigo-600 hover:text-white transition-all">{s[0]}</button>
                    ))}
                  </div>
               </div>
             </div>
             <div className="space-y-3 mb-10 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
               {students.map(s => (
-                <div key={s.usn} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl hover:border-indigo-200 transition-colors">
+                <div key={s.usn} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl hover:border-indigo-200 transition-colors shadow-sm">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center text-slate-400 font-black text-xs">{s.avatar ? <img src={s.avatar} className="w-full h-full object-cover" alt={s.name} /> : s.name[0]}</div>
                     <div><p className="text-sm font-black text-slate-800">{s.name}</p><p className="text-[10px] text-slate-400 font-bold uppercase">{s.usn}</p></div>
@@ -876,10 +1052,10 @@ const App = () => {
                       <button 
                         key={status}
                         onClick={() => setBulkAttStatus({...bulkAttStatus, [s.usn]: status as AttendanceStatus})}
-                        className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
+                        className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all shadow-sm ${
                           bulkAttStatus[s.usn] === status 
                           ? status === 'present' ? 'bg-emerald-600 text-white' : status === 'absent' ? 'bg-rose-600 text-white' : 'bg-amber-500 text-white'
-                          : 'bg-slate-50 text-slate-400 border border-slate-100'
+                          : 'bg-slate-50 text-slate-400 border border-slate-100 hover:bg-slate-100'
                         }`}
                       >
                         {status[0]}
@@ -889,12 +1065,12 @@ const App = () => {
                 </div>
               ))}
             </div>
-            <button onClick={handleBulkAttendanceSave} className="w-full bg-emerald-600 text-white font-black py-6 rounded-3xl shadow-xl hover:bg-emerald-700 transition-all uppercase tracking-[0.2em] text-sm">Synchronize Attendance Data</button>
+            <button onClick={handleBulkAttendanceSave} className="w-full bg-emerald-600 text-white font-black py-6 rounded-3xl shadow-xl hover:bg-emerald-700 transition-all uppercase tracking-[0.2em] text-sm shadow-emerald-500/20">Synchronize Repository Attendance</button>
           </div>
         </div>
       )}
 
-      {/* Analytics Dashboard (Summary Modal) */}
+      {/* Analytics Dashboard */}
       {showDashboardModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-xl" onClick={() => setShowDashboardModal(false)} />
@@ -902,54 +1078,54 @@ const App = () => {
             <div className="flex justify-between items-center mb-10 pb-4 border-b border-slate-100">
               <div className="flex items-center gap-4">
                 <div className="p-3 bg-indigo-600 text-white rounded-2xl shadow-xl shadow-indigo-100"><LayoutDashboard size={28} /></div>
-                <div><h2 className="text-3xl font-black text-slate-900 tracking-tight">Institutional Dashboard</h2><p className="text-slate-400 font-bold text-sm">Aggregated metrics from the student node network.</p></div>
+                <div><h2 className="text-3xl font-black text-slate-900 tracking-tight">Institutional Metrics</h2><p className="text-slate-400 font-bold text-sm">Aggregated real-time analysis from the linked network.</p></div>
               </div>
               <div className="flex gap-3">
-                 <button onClick={handleExportAttendanceReport} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-xs hover:bg-emerald-100"><FileSpreadsheet size={16}/> Attendance CSV</button>
-                 <button onClick={() => setShowExportModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs hover:bg-indigo-100"><Download size={16}/> Full CSV</button>
+                 <button onClick={handleExportAttendanceReport} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-xs hover:bg-emerald-100 transition-colors"><FileSpreadsheet size={16}/> Attendance Report</button>
+                 <button onClick={() => setShowExportModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs hover:bg-indigo-100 transition-colors"><Download size={16}/> Registry Backup</button>
                  <button onClick={() => setShowDashboardModal(false)} className="p-3 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"><X size={24} /></button>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
-               <div className="bg-slate-900 p-8 rounded-[2rem] text-white space-y-4 shadow-xl">
-                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Collection</p>
+               <div className="bg-slate-900 p-8 rounded-[2rem] text-white space-y-4 shadow-xl border border-white/5">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Recovery</p>
                  <p className="text-4xl font-black text-emerald-400">₹{students.reduce((acc, curr) => acc + curr.feesPaid, 0).toLocaleString()}</p>
                  <div className="pt-4 border-t border-white/10 flex justify-between items-center">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Target</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Node Target</span>
                     <span className="text-sm font-black text-slate-300">₹{students.reduce((acc, curr) => acc + curr.feesTotal, 0).toLocaleString()}</span>
                  </div>
                </div>
-               <div className="bg-indigo-600 p-8 rounded-[2rem] text-white space-y-4 shadow-xl">
-                 <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Average Marks</p>
+               <div className="bg-indigo-600 p-8 rounded-[2rem] text-white space-y-4 shadow-xl border border-white/5">
+                 <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Performance Avg</p>
                  <p className="text-4xl font-black">{students.length ? (students.reduce((acc, curr) => acc + curr.marks, 0) / students.length).toFixed(1) : 0}%</p>
                  <div className="pt-4 border-t border-white/10 flex justify-between items-center">
                     <span className="text-[10px] font-black uppercase tracking-widest text-indigo-200">Enrolled Nodes</span>
                     <span className="text-sm font-black text-indigo-100">{students.length}</span>
                  </div>
                </div>
-               <div className="bg-emerald-600 p-8 rounded-[2rem] text-white space-y-4 shadow-xl">
-                 <p className="text-[10px] font-black text-emerald-200 uppercase tracking-widest">Cohort Presence</p>
+               <div className="bg-emerald-600 p-8 rounded-[2rem] text-white space-y-4 shadow-xl border border-white/5">
+                 <p className="text-[10px] font-black text-emerald-200 uppercase tracking-widest">Presence Index</p>
                  <p className="text-4xl font-black">{students.length ? Math.round(students.reduce((acc, curr) => acc + calculateAttendancePercentage(curr.attendance), 0) / students.length) : 0}%</p>
                  <div className="pt-4 border-t border-white/10 flex justify-between items-center">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Classes Logged</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Sessions Logged</span>
                     <span className="text-sm font-black text-white">{students.reduce((acc, curr) => acc + (curr.attendance?.length || 0), 0)}</span>
                  </div>
                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-               <div className="lg:col-span-6 bg-slate-50 p-8 rounded-3xl border border-slate-100">
+               <div className="lg:col-span-6 bg-slate-50 p-8 rounded-3xl border border-slate-100 shadow-inner">
                   <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] mb-6 flex items-center gap-2"><Tag size={16} /> Demographic Segments</h3>
                   <div className="space-y-3">
                     {availableGroups.map(group => {
                       const count = students.filter(s => s.groups?.includes(group)).length;
                       const percentage = students.length ? Math.round((count / students.length) * 100) : 0;
                       return (
-                        <div key={group} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                        <div key={group} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 hover:border-indigo-200 transition-colors">
                           <div className="flex justify-between items-center mb-2">
                              <span className="text-xs font-black text-slate-700 uppercase">{group}</span>
-                             <span className="text-xs font-black text-indigo-600">{count} Members</span>
+                             <span className="text-xs font-black text-indigo-600">{count} Nodes</span>
                           </div>
                           <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                             <div className="h-full bg-indigo-500 shadow-sm" style={{ width: `${percentage}%` }} />
@@ -959,8 +1135,8 @@ const App = () => {
                     })}
                   </div>
                </div>
-               <div className="lg:col-span-6 bg-slate-50 p-8 rounded-3xl border border-slate-100">
-                  <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] mb-6 flex items-center gap-2"><AlertTriangle size={16} className="text-rose-500" /> Short Attendance Watchlist</h3>
+               <div className="lg:col-span-6 bg-slate-50 p-8 rounded-3xl border border-slate-100 shadow-inner">
+                  <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] mb-6 flex items-center gap-2"><AlertTriangle size={16} className="text-rose-500" /> Critical Compliance Watch</h3>
                   <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
                     {students.filter(s => calculateAttendancePercentage(s.attendance) < 75).map(s => (
                       <div key={s.usn} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-4 border-rose-500 flex justify-between items-center">
@@ -970,14 +1146,14 @@ const App = () => {
                         </div>
                         <div className="text-right">
                           <p className="text-xs font-black text-rose-600">{calculateAttendancePercentage(s.attendance)}% Presence</p>
-                          <p className="text-[9px] text-slate-400 font-bold uppercase">{"Critical Threshold < 75%"}</p>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase">{"Threshold Warning < 75%"}</p>
                         </div>
                       </div>
                     ))}
                     {students.filter(s => calculateAttendancePercentage(s.attendance) < 75).length === 0 && (
                       <div className="py-12 text-center">
                         <Check size={40} className="mx-auto text-emerald-500 mb-2" />
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">All students meet compliance</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">All repository nodes compliant</p>
                       </div>
                     )}
                   </div>
@@ -987,7 +1163,7 @@ const App = () => {
         </div>
       )}
 
-      {/* Export Modal */}
+      {/* Export Selection Modal */}
       {showExportModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setShowExportModal(false)} />
@@ -995,25 +1171,25 @@ const App = () => {
             <div className="flex justify-between items-center mb-8">
               <div className="flex items-center gap-4">
                 <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><FileSpreadsheet size={28} /></div>
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight">Enterprise Export</h2>
+                <h2 className="text-2xl font-black text-slate-900 tracking-tight">Repository Export</h2>
               </div>
               <button onClick={() => setShowExportModal(false)} className="p-2 hover:bg-slate-50 rounded-full transition-colors"><X size={24} /></button>
             </div>
             <div className="space-y-6">
               <div className="space-y-4">
-                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block ml-1">Export Scale</label>
+                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block ml-1">Export Boundaries</label>
                  <div className="grid grid-cols-2 gap-4">
-                   <button onClick={() => setExportScope('all')} className={`p-4 rounded-2xl border-2 font-black text-sm transition-all ${exportScope === 'all' ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-500'}`}>Full Repository</button>
-                   <button onClick={() => setExportScope('filtered')} className={`p-4 rounded-2xl border-2 font-black text-sm transition-all ${exportScope === 'filtered' ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-500'}`}>Current View</button>
+                   <button onClick={() => setExportScope('all')} className={`p-4 rounded-2xl border-2 font-black text-sm transition-all ${exportScope === 'all' ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}>Full Registry</button>
+                   <button onClick={() => setExportScope('filtered')} className={`p-4 rounded-2xl border-2 font-black text-sm transition-all ${exportScope === 'filtered' ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}>Active Segment</button>
                  </div>
               </div>
-              <button onClick={handleExportCSV} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-5 rounded-2xl shadow-xl flex items-center justify-center gap-3 uppercase tracking-widest text-xs shadow-emerald-100"><Download size={20} /> Generate Detailed Report</button>
+              <button onClick={handleExportCSV} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-5 rounded-2xl shadow-xl flex items-center justify-center gap-3 uppercase tracking-widest text-xs shadow-emerald-500/10"><Download size={20} /> Generate .CSV File</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Individual Attendance Modal */}
+      {/* Attendance Log Modal */}
       {showAttendanceModal && attendanceUsn && currentAttendanceStudent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-xl" onClick={() => setShowAttendanceModal(false)} />
@@ -1021,18 +1197,18 @@ const App = () => {
             <div className="flex justify-between items-center mb-8">
               <div className="flex items-center gap-4">
                 <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><CalendarCheck size={32} /></div>
-                <div><h2 className="text-2xl font-black text-slate-900 tracking-tight">Attendance Record</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">{currentAttendanceStudent.name} • {currentAttendanceStudent.usn}</p></div>
+                <div><h2 className="text-2xl font-black text-slate-900 tracking-tight">Timeline Log</h2><p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">{currentAttendanceStudent.name} • {currentAttendanceStudent.usn}</p></div>
               </div>
               <button onClick={() => setShowAttendanceModal(false)} className="p-3 bg-slate-50 rounded-full transition-colors"><X size={24} /></button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-12 gap-10">
               <div className="md:col-span-5 space-y-6">
                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-4">
-                    <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] flex items-center gap-2"><Clock size={14} /> Log Manual Session</h3>
-                    <input type="date" className="w-full px-5 py-3 rounded-xl border border-slate-200 bg-white font-bold" value={attDate} onChange={e => setAttDate(e.target.value)} />
+                    <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] flex items-center gap-2"><Clock size={14} /> Entry Form</h3>
+                    <input type="date" className="w-full px-5 py-3 rounded-xl border border-slate-200 bg-white font-bold outline-none focus:border-indigo-500" value={attDate} onChange={e => setAttDate(e.target.value)} />
                     <div className="grid grid-cols-3 gap-1">
                       {(['present', 'absent', 'leave'] as const).map(s => (
-                        <button key={s} onClick={() => setAttStatus(s as AttendanceStatus)} className={`py-2 rounded-lg text-[10px] font-black uppercase transition-all ${attStatus === s ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-400 border border-slate-200'}`}>{s[0]}</button>
+                        <button key={s} onClick={() => setAttStatus(s as AttendanceStatus)} className={`py-2 rounded-lg text-[10px] font-black uppercase transition-all ${attStatus === s ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-400 border border-slate-200 hover:border-indigo-100'}`}>{s[0]}</button>
                       ))}
                     </div>
                     <button onClick={() => {
@@ -1045,17 +1221,17 @@ const App = () => {
                         student.attendance = updatedRecords;
                         updateStudents();
                       }
-                    }} className="w-full bg-slate-900 text-white font-black py-4 rounded-2xl shadow-xl uppercase tracking-widest text-[10px]">Commit Log Entry</button>
+                    }} className="w-full bg-slate-900 text-white font-black py-4 rounded-2xl shadow-xl uppercase tracking-widest text-[10px] hover:bg-slate-800 transition-colors">Commit to Node</button>
                  </div>
-                 <div className="p-6 bg-indigo-600 rounded-3xl text-white"><p className="text-[10px] font-black uppercase opacity-60 mb-1">Success Metric</p><p className="text-4xl font-black">{calculateAttendancePercentage(currentAttendanceStudent.attendance)}%</p></div>
+                 <div className="p-6 bg-indigo-600 rounded-3xl text-white shadow-lg shadow-indigo-500/20"><p className="text-[10px] font-black uppercase opacity-60 mb-1">Success Metric</p><p className="text-4xl font-black">{calculateAttendancePercentage(currentAttendanceStudent.attendance)}%</p></div>
               </div>
               <div className="md:col-span-7 space-y-4">
-                 <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] flex items-center gap-2"><History size={16} /> Chronological Logs</h3>
+                 <h3 className="font-black text-slate-800 uppercase tracking-widest text-[11px] flex items-center gap-2"><History size={16} /> Chronological History</h3>
                  <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                     {currentAttendanceStudent.attendance?.length > 0 ? currentAttendanceStudent.attendance.map((r, i) => (
-                      <div key={i} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
+                      <div key={i} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl shadow-sm hover:border-indigo-100 transition-colors">
                         <div className="flex items-center gap-4">
-                          <div className={`w-3 h-3 rounded-full ${r.status === 'present' ? 'bg-emerald-500' : r.status === 'absent' ? 'bg-rose-500' : 'bg-amber-500'}`} />
+                          <div className={`w-3 h-3 rounded-full ${r.status === 'present' ? 'bg-emerald-500 shadow-sm shadow-emerald-500/40' : r.status === 'absent' ? 'bg-rose-500 shadow-sm shadow-rose-500/40' : 'bg-amber-500 shadow-sm shadow-amber-500/40'}`} />
                           <div><p className="text-xs font-black text-slate-800 capitalize">{r.status}</p><p className="text-[10px] text-slate-400 font-bold">{r.date}</p></div>
                         </div>
                         <button onClick={() => {
@@ -1066,7 +1242,7 @@ const App = () => {
                            }
                         }} className="p-2 text-slate-300 hover:text-rose-500 transition-all"><Trash2 size={16} /></button>
                       </div>
-                    )) : <p className="text-center py-12 text-slate-400 font-bold text-xs italic uppercase tracking-widest">No node data</p>}
+                    )) : <p className="text-center py-12 text-slate-400 font-bold text-xs italic uppercase tracking-widest">No activity logged for this node</p>}
                  </div>
               </div>
             </div>
@@ -1074,26 +1250,30 @@ const App = () => {
         </div>
       )}
 
-      {/* Delete Confirmation */}
+      {/* Purge Confirmation */}
       {deleteConfirmUsn && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setDeleteConfirmUsn(null)} />
-          <div className="relative bg-white rounded-[2.5rem] w-full max-w-sm p-10 shadow-2xl text-center animate-in zoom-in duration-200">
-            <div className="w-20 h-20 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-8"><AlertTriangle size={40} /></div>
-            <h3 className="text-2xl font-black text-slate-900 mb-2">Confirm Delete</h3>
-            <p className="text-slate-500 font-semibold mb-10 text-sm">Removal of <span className="text-rose-600 font-black">{deleteConfirmUsn}</span> is permanent.</p>
-            <button onClick={confirmDelete} className="w-full bg-rose-600 hover:bg-rose-700 text-white font-black py-5 rounded-2xl shadow-xl mb-3 uppercase tracking-widest text-xs">Purge Student Node</button>
-            <button onClick={() => setDeleteConfirmUsn(null)} className="w-full bg-slate-50 text-slate-500 font-black py-4 rounded-2xl hover:bg-slate-100 uppercase tracking-widest text-xs">Cancel</button>
+          <div className="relative bg-white rounded-[2.5rem] w-full max-sm p-10 shadow-2xl text-center animate-in zoom-in duration-200">
+            <div className="w-20 h-20 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-8 shadow-inner"><AlertTriangle size={40} /></div>
+            <h3 className="text-2xl font-black text-slate-900 mb-2">Purge Request</h3>
+            <p className="text-slate-500 font-semibold mb-10 text-sm">Removal of node <span className="text-rose-600 font-black">{deleteConfirmUsn}</span> is permanent.</p>
+            <button onClick={confirmDelete} className="w-full bg-rose-600 hover:bg-rose-700 text-white font-black py-5 rounded-2xl shadow-xl mb-3 uppercase tracking-widest text-xs shadow-rose-500/20">Perm purge from registry</button>
+            <button onClick={() => setDeleteConfirmUsn(null)} className="w-full bg-slate-50 text-slate-500 font-black py-4 rounded-2xl hover:bg-slate-100 uppercase tracking-widest text-xs transition-colors">Abort action</button>
           </div>
         </div>
       )}
 
-      {/* Global CSS for Custom Scrollbar */}
+      {/* Custom Styles */}
       <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+        input[type="date"]::-webkit-calendar-picker-indicator {
+          cursor: pointer;
+          filter: invert(0.5);
+        }
       `}</style>
     </div>
   );
